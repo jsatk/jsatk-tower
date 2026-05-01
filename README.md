@@ -38,12 +38,12 @@ The array uses Unraid's parity-based storage. Layout:
 | Slot | Size | Drive | Device |
 |---|---|---|---|
 | Parity | 28TB | Seagate IronWolf Pro | sdd |
-| Disk 1 | 6TB | WD | sdc |
+| Disk 1 | 28TB | Seagate IronWolf Pro | sdc |
 | Disk 2 | 28TB | Seagate IronWolf Pro | sde |
-| Disk 3 | 6TB | WD | sdb |
+| Disk 3 | 28TB | Seagate IronWolf Pro | sdb |
 | Cache | 1TB | Samsung 990 EVO Plus NVMe | — |
 
-Usable capacity is approximately **~34TB** (two 6TB + one 28TB data drives). Parity is a dedicated separate drive and does not reduce usable space. Unraid presents all data drives as a unified pool via the FUSE overlay at `/mnt/user/`. The NVMe cache is formatted btrfs and handles cache-first writes for the `data` share.
+Usable capacity is approximately **~84TB** (28TB × 3 data drives). Parity is a dedicated separate drive and does not reduce usable space. Unraid presents all data drives as a unified pool via the FUSE overlay at `/mnt/user/`. The NVMe cache is formatted btrfs and handles cache-first writes for the `data` share.
 
 > **Important:** For hardlinks (required by the *arr stack), use the underlying disk paths like `/mnt/disk1/...` rather than `/mnt/user/`. The FUSE overlay does not support hardlinks across different underlying drives, which silently breaks the *arr stack's move/rename operations.
 
