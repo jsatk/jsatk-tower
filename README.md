@@ -1,21 +1,29 @@
 # jsatk-tower Infrastructure Documentation
 
-> Last updated: May 1, 2026  
-> Hardware: Ugreen DXP4800 Plus · OS: Unraid 7.2.4 · Hostname: `jsatk-tower`
+> Last updated: June 6, 2026  
+> Hardware: Ugreen DXP4800 Plus · OS: Unraid 7.3 · Hostname: `jsatk-tower`
 
 ---
 
 ## Table of Contents
 
-1. [Hardware Overview](#hardware-overview)
-2. [Networking Architecture](#networking-architecture)
-3. [Docker Container Stack](#docker-container-stack)
-4. [Media Automation Pipeline](#media-automation-pipeline)
-5. [Plex & Playback](#plex--playback)
-6. [Monitoring & Notifications](#monitoring--notifications)
-7. [Backup](#backup)
-8. [Storage Layout](#storage-layout)
-9. [Access Reference](#access-reference)
+1. [Background](#background)
+2. [Hardware Overview](#hardware-overview)
+3. [Networking Architecture](#networking-architecture)
+4. [Docker Container Stack](#docker-container-stack)
+5. [Media Automation Pipeline](#media-automation-pipeline)
+6. [Plex & Playback](#plex--playback)
+7. [Monitoring & Notifications](#monitoring--notifications)
+8. [Backup](#backup)
+9. [Storage Layout](#storage-layout)
+10. [Access Reference](#access-reference)
+11. [Decisions & Considerations](#decisions--considerations)
+
+---
+
+## Background
+
+First off, a huge debt of gratitude is owed to TRaSH for his [guide](https://trash-guides.info).  This guide along with his Discord (and the community therein) helped me navigate all this.  I encourage anyone reading this to also thoroughly read his guide and if you get stumped join the Discord and open a support thread.
 
 ---
 
@@ -25,7 +33,7 @@
 |---|---|
 | Device | Ugreen DXP4800 Plus |
 | CPU | Intel N100 (with QuickSync hardware transcoding) |
-| OS | Unraid 7.2.4 |
+| OS | Unraid 7.3 |
 | Hostname | `jsatk-tower` |
 | LAN IP | `192.168.142.135` |
 | Router | AmpliFi Alien, subnet `192.168.142.0/24`, gateway `192.168.142.1` |
@@ -33,7 +41,7 @@
 
 ### Storage Configuration
 
-The array uses Unraid's parity-based storage. Layout:
+The array uses [Unraid](https://unraid.net)'s parity-based storage. Layout:
 
 | Slot | Size | Drive | Device |
 |---|---|---|---|
@@ -44,8 +52,6 @@ The array uses Unraid's parity-based storage. Layout:
 | Cache | 1TB | Samsung 990 EVO Plus NVMe | — |
 
 Usable capacity is approximately **~84TB** (28TB × 3 data drives). Parity is a dedicated separate drive and does not reduce usable space. Unraid presents all data drives as a unified pool via the FUSE overlay at `/mnt/user/`. The NVMe cache is formatted btrfs and handles cache-first writes for the `data` share.
-
-> **Important:** For hardlinks (required by the *arr stack), use the underlying disk paths like `/mnt/disk1/...` rather than `/mnt/user/`. The FUSE overlay does not support hardlinks across different underlying drives, which silently breaks the *arr stack's move/rename operations.
 
 ---
 
@@ -71,11 +77,11 @@ The wildcard `*.jsatk.us → LAN IP` means that when you're on LAN (or connected
 
 ### SSL Certificate
 
-A wildcard TLS certificate for `*.jsatk.us` is issued by Let's Encrypt and managed by Nginx Proxy Manager using the **Cloudflare DNS-01 challenge**. Because it's a DNS challenge (not HTTP), the NAS doesn't need to be publicly reachable for cert issuance or renewal — Cloudflare handles the challenge token via the API. The cert covers all `*.jsatk.us` subdomains.
+A wildcard TLS certificate for `*.jsatk.us` is issued by [Let's Encrypt](https://letsencrypt.org) and managed by Nginx Proxy Manager using the **Cloudflare DNS-01 challenge**. Because it's a DNS challenge (not HTTP), the NAS doesn't need to be publicly reachable for cert issuance or renewal — Cloudflare handles the challenge token via the API. The cert covers all `*.jsatk.us` subdomains.
 
 ### WireGuard VPN
 
-WireGuard is built into Unraid (interface `wg0`) and is used for **remote access to self-hosted services only** — not as a general-purpose traffic tunnel.
+[WireGuard](https://www.wireguard.com) is built into Unraid (interface `wg0`) and is used for **remote access to self-hosted services only** — not as a general-purpose traffic tunnel.
 
 | Setting | Value |
 |---|---|
@@ -91,7 +97,7 @@ The `cloudflareddns` container monitors the public IP and updates the `vpn.jsatk
 
 When connected via WireGuard from iPhone or Mac Studio, traffic destined for `*.jsatk.us` resolves to `192.168.142.135` (LAN IP), so all service access goes directly through the encrypted tunnel to the NAS.
 
-**Note:** Tailscale was fully removed from jsatk-tower, Mac Studio, and iPhone. WireGuard replaced it entirely.
+**Note:** [Tailscale](https://tailscale.com) was fully removed from jsatk-tower, Mac Studio, and iPhone. WireGuard replaced it entirely.
 
 ### Nginx Proxy Manager (NPM)
 
@@ -103,9 +109,10 @@ NPM (mgutt fork) is the reverse proxy sitting in front of all services. It termi
 | 81 | NPM admin UI |
 | 443 | HTTPS (all proxied services) |
 
-Port `443/TCP` and `32400/TCP` (Plex) are forwarded on the AmpliFi Alien to `192.168.142.135`.
+Port `443/TCP` and `32400/TCP` ([Plex](https://www.plex.tv)) are forwarded on the AmpliFi Alien to `192.168.142.135`.
 
 **Access control:** NPM has an access list called "LAN & VPN only" that allows:
+
 - `192.168.142.0/24` (LAN)
 - `10.253.0.0/24` (WireGuard tunnel)
 - Deny all others
@@ -130,7 +137,7 @@ This access list is applied to **all proxy hosts except `seerr` and `plex`**, wh
 
 ### Pi-hole (Network-Wide DNS)
 
-Pi-hole runs as a Docker container on the default `bridge` network (not `jsatk-net`) at `192.168.142.135`, with its web UI accessible at `pihole.jsatk.us` via NPM (LAN/VPN only).
+[Pi-hole](https://pi-hole.net) runs as a Docker container on the default `bridge` network (not `jsatk-net`) at `192.168.142.135`, with its web UI accessible at `pihole.jsatk.us` via NPM (LAN/VPN only).
 
 | Setting | Value |
 |---|---|
@@ -142,6 +149,7 @@ Pi-hole runs as a Docker container on the default `bridge` network (not `jsatk-n
 | Conditional forwarding | Enabled — `192.168.142.0/24` → `192.168.142.1` (router) for local hostname resolution |
 
 **Router configuration (AmpliFi Alien):**
+
 - Bypass DNS Cache: **ON**
 - Built-in Ad Blocker: **OFF** (Pi-hole handles this)
 - WAN DNS Primary: `192.168.142.135` (Pi-hole)
@@ -168,6 +176,7 @@ WireGuard peers use `1.1.1.1` as their DNS rather than Pi-hole, so ad blocking d
 All containers run on a custom bridge network called `jsatk-net` (subnet `172.18.0.0/16`). This allows containers to reference each other by name (e.g., `http://sonarr:8989`) rather than by IP.
 
 Two containers are exceptions to the `jsatk-net` rule:
+
 - `cloudflareddns` runs on the default `bridge` network — it only needs outbound internet access and doesn't communicate with other containers
 - `pihole` runs on the default `bridge` network — required so it can bind to port 53 on the host and act as a network-wide DNS server
 
@@ -176,16 +185,18 @@ Two containers are exceptions to the `jsatk-net` rule:
 | Container | Internal Port | LAN Port | Role |
 |---|---|---|---|
 | `bazarr` | 6767 | 6767 | Subtitle management |
-| `kometa` | — | — | Automated Plex collection management |
 | `beszel` | 8090 | 8090 | System monitoring dashboard |
 | `beszel-agent` | — | — | Metrics agent for beszel |
 | `cloudflareddns` | — | — | Dynamic DNS updater |
 | `flaresolverr` | 8191 | 8191 | Cloudflare bypass for Prowlarr |
+| `kometa` | — | — | Automated Plex collection management |
 | `kopia` | 51515 | 51515 | Backup (appdata + /boot → Mac Studio via SFTP) |
 | `maintainerr` | 6246 | 6246 | Automated library cleanup |
 | `nginx-proxy-manager` | 80/81/443 | 80/81/443 | Reverse proxy + SSL termination |
 | `notifiarr` | 5454 | 5454 | Discord notification hub |
+| `pihole` | 80/53 | 8155 (web) / 53 (DNS) | Network-wide ad blocking + DNS (bridge network) |
 | `plex` | 32400 | 32400 | Media server |
+| `posterflow` | 8000 | 8357 | Poster management |
 | `prowlarr` | 9696 | 9696 | Indexer manager |
 | `qbittorrent` | 8080 | 8080 | Torrent client |
 | `qui` | 7476 | 7476 | Alternative qBittorrent UI |
@@ -194,7 +205,6 @@ Two containers are exceptions to the `jsatk-net` rule:
 | `seerr` | 5055 | 5055 | Request management |
 | `sonarr` | 8989 | 8989 | TV show automation |
 | `tautulli` | 8181 | 8181 | Plex analytics |
-| `pihole` | 80/53 | 8155 (web) / 53 (DNS) | Network-wide ad blocking + DNS (bridge network) |
 
 ### Inter-Container Communication
 
@@ -250,17 +260,17 @@ User request (Seerr)
 
 ### Seerr
 
-Seerr is the user-facing request portal at `seerr.jsatk.us`. It's the only service exposed publicly (Cloudflare-proxied). Local sign-in is disabled — authentication is **Plex OAuth only**.
+[Seerr](https://docs.seerr.dev) is the user-facing request portal at `seerr.jsatk.us`. It's the only service exposed publicly (Cloudflare-proxied). Local sign-in is disabled — authentication is **Plex OAuth only**.
 
-Users: `jsatk` (owner) and `lcatk`, both Plex-linked. When a request is approved, Seerr routes it to Sonarr (TV) or Radarr (movies).
+Users: `jsatk` (owner) and `lcatk`, both Plex-linked. When a request is approved, Seerr routes it to [Sonarr](https://sonarr.tv) (TV) or [Radarr](https://radarr.video) (movies).
 
 ### Prowlarr
 
-Prowlarr is the centralised indexer manager. Rather than configuring indexers separately in Sonarr and Radarr, you configure them once in Prowlarr and it syncs to both automatically. Prowlarr manages both **Usenet indexers** (NZB) and **torrent trackers**.
+[Prowlarr](https://prowlarr.com) is the centralised indexer manager. Rather than configuring indexers separately in Sonarr and Radarr, you configure them once in Prowlarr and it syncs to both automatically. Prowlarr manages both **Usenet indexers** (NZB) and **torrent trackers**.
 
 ### FlareSolverr
 
-Some torrent tracker sites use Cloudflare's browser challenge to block scrapers. FlareSolverr runs a headless browser that can solve these challenges. Prowlarr is configured to route requests through FlareSolverr (`http://flaresolverr:8191`) for indexers that require it.
+Some torrent tracker sites use Cloudflare's browser challenge to block scrapers. [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) runs a headless browser that can solve these challenges. Prowlarr is configured to route requests through FlareSolverr (`http://flaresolverr:8191`) for indexers that require it.
 
 ### Sonarr & Radarr
 
@@ -276,16 +286,18 @@ Sonarr handles TV shows; Radarr handles movies. Both:
 
 ### Download Clients
 
-**SABnzbd (Usenet):**
+**[SABnzbd](https://sabnzbd.org) (Usenet):**
+
 - Primary client for Usenet (NZB) content
 - Host port `7080` (internal container port `8080`)
 - Newshosting is the primary Usenet provider (US-based)
 - Eweka is configured as a backup provider for filling in incomplete articles
 - `host_whitelist` includes: `sabnzbd`, `radarr`, `sonarr`, `sabnzbd.jsatk.us`, `jsatk-tower`
 
-**qBittorrent (Torrents):**
+**[qBittorrent](https://www.qbittorrent.org) (Torrents):**
+
 - Secondary client for torrent content
-- UI theme: VueTorrent (configured via `WebUI\RootFolder=/config/vuetorrent/`)
+- UI theme: [VueTorrent](https://github.com/VueTorrent/VueTorrent) (configured via `WebUI\RootFolder=/config/vuetorrent/`)
 - **Qui** (running at `:7476`) provides an additional alternative qBittorrent frontend
 
 ### Hardlinks & File Layout
@@ -311,15 +323,16 @@ Typical layout:
 
 ### Bazarr (Subtitles)
 
-Bazarr monitors Sonarr and Radarr libraries and automatically fetches subtitles for new content.
+[Bazarr](https://www.bazarr.media) monitors Sonarr and Radarr libraries and automatically fetches subtitles for new content.
 
 Configured providers:
+
 - **OpenSubtitles.com** (primary)
 - **Addic7ed** (primary)
 
 ### Maintainerr (Library Cleanup)
 
-Maintainerr automates removal of content from the Plex library based on configurable rules.
+[Maintainerr](https://github.com/jorenn92/Maintainerr) automates removal of content from the Plex library based on configurable rules.
 
 Example rule in use: **Jeopardy! episodes are automatically deleted 7 days after being watched.**
 
@@ -327,17 +340,44 @@ A notable configuration detail: there was a TVDB ID mismatch between Plex (ID `4
 
 ### Kometa (Plex Collection Management)
 
-Kometa is a Docker container on `jsatk-net` that automatically creates and maintains Plex collections by querying external sources (Trakt, IMDb lists, etc.) and syncing them to the Plex library. It runs persistently and processes the library on a schedule — the default run time is **3:00 AM daily** via the `KOMETA_TIMES` environment variable.
+[Kometa](https://kometa.wiki) is a Docker container on `jsatk-net` that automatically creates and maintains Plex collections by querying external sources (Trakt, IMDb lists, etc.) and syncing them to the Plex library. It runs persistently and processes the library on a schedule — the default run time is **3:00 AM daily** via the `KOMETA_TIMES` environment variable.
 
 Config is stored at `/mnt/user/appdata/kometa/config/config.yml`. Kometa connects to Plex at `http://plex:32400` on `jsatk-net`.
 
 Kometa has no web UI and is not exposed via NPM. Logs can be viewed via the Unraid Docker log viewer.
 
+### PosterFlow (Poster Management)
+
+[PosterFlow](https://github.com/dweagle/posterflow) is a self-hosted poster management system at `posterflow.jsatk.us`. It syncs movie and TV show posters from community Google Drive sources via rclone and manages applying them to the Plex library. Kometa is **not** used for poster management — PosterFlow handles all of it.
+
+- **Image:** `dweagle/posterflow:develop`
+- **Port:** 8357 (host) → 8000 (container)
+- **Network:** `jsatk-net`
+
+**Volume mounts:**
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| `/mnt/user/appdata/posterflow` | `/config` | DB, rclone config, logs, scheduler state |
+| `/mnt/user/data/assets` | `/assets` | Renamed, organised poster output |
+| `/mnt/user/data/posters` | `/config/posters/gdrive` | GDrive poster sync cache |
+
+**Drive sync:** Only **CL2K**-style posters are subscribed to. No other community preset drives are enabled.
+
+Features in use:
+
+- **Drive Syncing** — pulls CL2K posters from Google Drive via rclone
+- **Poster Renamer** — renames posters to match Plex/Radarr/Sonarr library naming, writing output to `/mnt/user/data/assets`
+- **Border Replacer** — replaces poster borders in bulk
+- **Plex Upload** — uploads posters directly to Plex libraries
+- **Unmatched Assets** — identifies library items with no poster coverage
+
 ### Tagarr (Release Group Tagging)
 
-Tagarr is a shell script — not a standalone container — that tags imports in Radarr and Sonarr based on release group quality. It runs inside the Radarr and Sonarr containers: the script is stored at `/mnt/user/appdata/scripts/taggar/tagarr_import.sh` (note: directory is spelled `taggar`) and mounted into both containers at `/scripts/tagarr_import.sh`, invoked via a **Custom Script connection** in each app's notification settings.
+[Tagarr](https://github.com/ProphetSe7en/tagarr) is a shell script — not a standalone container — that tags imports in Radarr and Sonarr based on release group quality. It runs inside the Radarr and Sonarr containers: the script is stored at `/mnt/user/appdata/scripts/taggar/tagarr_import.sh` (note: directory is spelled `taggar`) and mounted into both containers at `/scripts/tagarr_import.sh`, invoked via a **Custom Script connection** in each app's notification settings.
 
 Triggers configured in both Radarr and Sonarr:
+
 - **On File Import** — tags newly imported files
 - **On File Upgrade** — re-tags when a quality upgrade replaces an existing file
 - **On Movie/Episode File Delete** — cleans up tags when files are removed
@@ -352,7 +392,6 @@ The script inspects the release group of each imported file and applies the appr
 
 - **Image:** `ghcr.io/hotio/plex:latest`
 - **Server name:** `jsatk-tower`
-- **Machine ID:** `bdf765f130912067de6b632ab1c4351676ae464a`
 
 Key Docker config:
 
@@ -369,6 +408,7 @@ Key Docker config:
 The N100 processor supports Intel QuickSync via VA-API. The hotio Plex image bundles the Intel iHD driver itself in `/config/Drivers/` — no system-level driver install is needed on Unraid. The image auto-detects `/dev/dri` on startup.
 
 Historical fix notes:
+
 - `/transcode` permission denied → fixed by mapping `/dev/shm/plex-transcode` (tmpfs in RAM) to `/transcode`
 - EAE binary not executable → fixed by `PLEX_PURGE_CODECS=true`, which causes Plex to download fresh codecs with correct permissions on startup
 
@@ -382,7 +422,7 @@ Plex is configured for audio passthrough to Apple TV, allowing lossless/surround
 
 ### Tautulli
 
-Tautulli provides Plex analytics — watch history, user stats, stream quality breakdowns, etc. Connects to Plex at `http://plex:32400`.
+[Tautulli](https://tautulli.com) provides Plex analytics — watch history, user stats, stream quality breakdowns, etc. Connects to Plex at `http://plex:32400`.
 
 ---
 
@@ -390,9 +430,10 @@ Tautulli provides Plex analytics — watch history, user stats, stream quality b
 
 ### Notifiarr
 
-Notifiarr is the notification hub. It receives events from Sonarr, Radarr, and other *arr apps and routes them to Discord webhooks. Notifiarr mounts `/mnt/disk1` at `/storage/1` to allow disk-level reporting.
+[Notifiarr](https://notifiarr.com) is the notification hub. It receives events from Sonarr, Radarr, and other *arr apps and routes them to Discord webhooks. Notifiarr mounts `/mnt/disk1` at `/storage/1` to allow disk-level reporting.
 
 Typical notifications sent to Discord:
+
 - Download grabbed / completed
 - New episode or movie added to library
 - Quality upgrade replaced an existing file
@@ -400,7 +441,7 @@ Typical notifications sent to Discord:
 
 ### Beszel + Beszel Agent
 
-Beszel is a lightweight system monitoring dashboard at `:8090`. The `beszel-agent` container runs alongside it, collecting metrics (CPU, RAM, disk, network) from the host and feeding them to the Beszel UI. The agent mounts `/var/run/docker.sock` to report container-level stats as well.
+[Beszel](https://github.com/henrygd/beszel) is a lightweight system monitoring dashboard at `:8090`. The `beszel-agent` container runs alongside it, collecting metrics (CPU, RAM, disk, network) from the host and feeding them to the Beszel UI. The agent mounts `/var/run/docker.sock` to report container-level stats as well.
 
 ---
 
@@ -408,7 +449,7 @@ Beszel is a lightweight system monitoring dashboard at `:8090`. The `beszel-agen
 
 ### Kopia
 
-Kopia is a Docker container (`kopia/kopia:latest`) on `jsatk-net`, running at port `51515`, accessible at `kopia.jsatk.us` via NPM (LAN/VPN only). It handles encrypted, deduplicated offsite backup of appdata and the Unraid flash drive to the Mac Studio.
+[Kopia](https://kopia.io) is a Docker container (`kopia/kopia:latest`) on `jsatk-net`, running at port `51515`, accessible at `kopia.jsatk.us` via NPM (LAN/VPN only). It handles encrypted, deduplicated offsite backup of appdata and the Unraid flash drive to the Mac Studio.
 
 **Container config:**
 
@@ -430,6 +471,8 @@ Kopia is a Docker container (`kopia/kopia:latest`) on `jsatk-net`, running at po
 | SSH key (container) | `/root/.ssh/kopia_ed25519` |
 | SSH mode | External password-less SSH command with `-i /root/.ssh/kopia_ed25519 -o StrictHostKeyChecking=no` |
 | Encryption | `KOPIA_PASSWORD` env var (repo encryption password) |
+
+> `-o StrictHostKeyChecking=no` is a deliberate trade-off — the SFTP target is a static LAN IP, so MITM risk is negligible.
 
 The SSH key pair lives at `/boot/config/ssh/kopia_ed25519` (persists across reboots via the flash drive).
 
@@ -461,12 +504,11 @@ The `/boot` snapshot runs at 05:25 via Kopia's own built-in scheduler — no sep
 
 ### Volume Mapping Conventions
 
-All app config is stored in `/mnt/cache/appdata/<app>/` — the cache drive is used for fast, frequently-written config data. Media and bulk data lives on the array at `/mnt/user/data/`.
+All app config is stored in `/mnt/user/appdata/<app>/`. The `appdata` share is assigned to the NVMe SSD cache, so it physically lives on the cache drive — but Unraid's FUSE overlay means the correct path to use (and the one containers are mapped to) is always `/mnt/user/appdata/`, not `/mnt/cache/appdata/`. Media and bulk data lives on the array at `/mnt/user/data/`.
 
 | Path | Contents |
 |---|---|
-| `/mnt/cache/appdata/<app>/` | Container config, databases (bazarr, plex, prowlarr, qbittorrent, etc.) |
-| `/mnt/user/appdata/<app>/` | Some app data (maintainerr, NPM, etc.) |
+| `/mnt/user/appdata/<app>/` | All container config and databases (bazarr, plex, prowlarr, qbittorrent, maintainerr, NPM, etc.) — physically on the NVMe cache |
 | `/mnt/user/data/media/` | Plex media library (movies, TV) |
 | `/mnt/user/data/torrents/` | qBittorrent active downloads |
 | `/mnt/user/data/usenet/` | SABnzbd active downloads (incomplete + complete) |
@@ -546,6 +588,7 @@ cp ~/.vimrc /boot/config/home/.vimrc
 | Qui (alt qBittorrent UI) | `https://qui.jsatk.us` |
 | Pi-hole | `https://pihole.jsatk.us` |
 | Kopia | `https://kopia.jsatk.us` |
+| PosterFlow | `https://posterflow.jsatk.us` |
 
 ### Publicly Accessible (No VPN Needed)
 
