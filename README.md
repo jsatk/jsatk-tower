@@ -1,7 +1,7 @@
 # jsatk-tower Infrastructure Documentation
 
-> Last updated: June 6, 2026  
-> Hardware: Ugreen DXP4800 Plus · OS: Unraid 7.3 · Hostname: `jsatk-tower`
+> Last updated: June 28, 2026
+> Hardware: Ugreen DXP4800 Plus · OS: Unraid 7.3.1 · Hostname: `jsatk-tower`
 
 ---
 
@@ -23,7 +23,7 @@
 
 ## Background
 
-First off, a huge debt of gratitude is owed to TRaSH for his [guide](https://trash-guides.info).  This guide along with his Discord (and the community therein) helped me navigate all this.  I encourage anyone reading this to also thoroughly read his guide and if you get stumped join the Discord and open a support thread.
+First off, a huge debt of gratitude is owed to TRaSH for his [guide](https://trash-guides.info). This guide along with his Discord (and the community therein) helped me navigate all this. I encourage anyone reading this to also thoroughly read his guide and if you get stumped join the Discord and open a support thread.
 
 ---
 
@@ -33,10 +33,10 @@ First off, a huge debt of gratitude is owed to TRaSH for his [guide](https://tra
 |---|---|
 | Device | Ugreen DXP4800 Plus |
 | CPU | Intel N100 (with QuickSync hardware transcoding) |
-| OS | Unraid 7.3 |
+| OS | Unraid 7.3.1 |
 | Hostname | `jsatk-tower` |
-| LAN IP | `192.168.142.135` |
-| Router | AmpliFi Alien, subnet `192.168.142.0/24`, gateway `192.168.142.1` |
+| LAN IP | `192.168.1.148` (DHCP reservation) |
+| Router | UniFi UDM-SE, subnet `192.168.1.0/24`, gateway `192.168.1.1` |
 | Unraid WebUI | `http://jsatk-tower.local:82` (HTTP port 82, HTTPS port 444) |
 
 ### Storage Configuration
@@ -59,19 +59,70 @@ Usable capacity is approximately **~84TB** (28TB × 3 data drives). Parity is a 
 
 This is the most complex part of the setup. The goal is: services are accessible securely from outside the LAN via HTTPS with real domain names, without exposing everything to the public internet.
 
+### Physical Network
+
+The home network was fully overhauled in June 2026. The AmpliFi Alien was replaced with a full UniFi stack. All ethernet runs are Cat6 home runs terminated at wall plates in each room.
+
+**Rack (office, 2nd floor):**
+
+| Device | Model | Role |
+|---|---|---|
+| Modem | UniFi Cable Internet (UCI) | DOCSIS 3.1 modem, 2.5GbE, rack-mounted (1U) |
+| Gateway | UniFi Dream Machine Special Edition (UDM-SE) | Router, firewall, DHCP, DNS, 1U rack-mounted |
+| Switch | USW-Pro-Max-24-PoE | 24-port managed switch, 400W PoE budget, 8x 2.5GbE ports |
+| UPS | UniFi UPS 2U | Battery backup for all rack gear |
+
+**Access Points:**
+
+| Device | Model | Location |
+|---|---|---|
+| U7 In-Wall | U7-IW | Office (2nd floor), mounts in low-voltage wall box |
+| U7 In-Wall | U7-IW | Bedroom (2nd floor), mounts in low-voltage wall box |
+| U7 Pro | U7-Pro | 3rd floor open plan (ceiling mounted, centrally located) |
+
+All APs are powered via PoE from the USW-Pro-Max-24-PoE switch using the 2.5GbE ports, providing full WiFi 7 backhaul.
+
+**WiFi SSIDs:**
+
+| SSID | Band | Notes |
+|---|---|---|
+| Vandelay Industries | 5 GHz / 6 GHz | Main network |
+| Vandelay Industries-2.4 | 2.4 GHz | Legacy devices |
+| Vandelay Industries Guest | 2.4 / 5 / 6 GHz | Isolated guest network |
+
+**Ethernet drops:**
+
+| Location | Drops | Notes |
+|---|---|---|
+| Office (2nd floor) | 6 | Rack location; cables run directly to switch |
+| Wife's office (2nd floor) | 2 | Via wall plate |
+| Living room (3rd floor) | 4 | Apple TV, OLED, spares |
+| AP drops | 3 | One per AP, via patch panel / wall plate to switch |
+
+**Port forwarding (UDM-SE → jsatk-tower):**
+
+| Name | Port | Protocol | Forwarded To | Purpose |
+|---|---|---|---|---|
+| HTTP | 80 | TCP/UDP | 192.168.1.148 | NPM (redirects to HTTPS) |
+| HTTPS | 443 | TCP/UDP | 192.168.1.148 | NPM → all services |
+| WireGuard | 51820 | UDP | 192.168.1.148 | WireGuard VPN |
+| Plex | 32400 | TCP | 192.168.1.148 | Plex direct remote access |
+
 ### Domain & DNS
 
 - **Registrar:** Namecheap
 - **DNS provider:** Cloudflare
 - **Primary domain:** `jsatk.us`
 
-Two DNS records drive everything:
+DNS records:
 
 | Record | Type | Value | Purpose |
 |---|---|---|---|
-| `vpn.jsatk.us` | A | `<YOUR_PUBLIC_IP>` (public IP) | WireGuard VPN endpoint, kept current by `cloudflareddns` container |
-| `*.jsatk.us` | A | `192.168.142.135` (LAN IP) | Wildcard — resolves all subdomains to the NAS on LAN |
-| `seerr.jsatk.us` | A | `<YOUR_PUBLIC_IP>` (public IP) | Publicly accessible Seerr (proxied through Cloudflare) |
+| `vpn.jsatk.us` | A | `<public IP>` | WireGuard VPN endpoint, kept current by `cloudflareddns` |
+| `*.jsatk.us` | A | `192.168.1.148` (LAN IP) | Wildcard — resolves all subdomains to jsatk-tower on LAN/VPN |
+| `seerr.jsatk.us` | A | `<public IP>` | Publicly accessible Seerr (proxied through Cloudflare) |
+
+The `cloudflareddns` container monitors the public IP and updates both `vpn.jsatk.us` and `seerr.jsatk.us` via the Cloudflare API every 300 seconds (`CF_HOSTS=vpn.jsatk.us;seerr.jsatk.us`).
 
 The wildcard `*.jsatk.us → LAN IP` means that when you're on LAN (or connected via WireGuard), `sonarr.jsatk.us`, `plex.jsatk.us`, etc. all resolve directly to the NAS. No split-DNS tricks needed.
 
@@ -89,13 +140,15 @@ A wildcard TLS certificate for `*.jsatk.us` is issued by [Let's Encrypt](https:/
 | Tunnel network | `10.253.0.0/24` |
 | jesse-iphone peer | `10.253.0.2` |
 | jesse-mac-studio peer | `10.253.0.3` |
+| jesse-ipad peer | `10.253.0.4` |
 | Peer DNS | `1.1.1.1` |
+| Client Allowed IPs | `10.253.0.1/32, 192.168.1.0/24` |
 
-Port `51820/UDP` is forwarded on the AmpliFi Alien to `192.168.142.135`.
+Port `51820/UDP` is forwarded on the UDM-SE to `192.168.1.148`.
 
-The `cloudflareddns` container monitors the public IP and updates the `vpn.jsatk.us` DNS A record via the Cloudflare API every 300 seconds. This means the VPN endpoint always points at the correct public IP even if the ISP changes it (dynamic IP).
+The `cloudflareddns` container monitors the public IP and updates `vpn.jsatk.us` via the Cloudflare API every 300 seconds. This means the VPN endpoint always points at the correct public IP even if the ISP changes it (dynamic IP).
 
-When connected via WireGuard from iPhone or Mac Studio, traffic destined for `*.jsatk.us` resolves to `192.168.142.135` (LAN IP), so all service access goes directly through the encrypted tunnel to the NAS.
+When connected via WireGuard from iPhone, iPad, or Mac Studio, traffic destined for `*.jsatk.us` resolves to `192.168.1.148` (LAN IP), so all service access goes directly through the encrypted tunnel to the NAS.
 
 **Note:** [Tailscale](https://tailscale.com) was fully removed from jsatk-tower, Mac Studio, and iPhone. WireGuard replaced it entirely.
 
@@ -109,11 +162,11 @@ NPM (mgutt fork) is the reverse proxy sitting in front of all services. It termi
 | 81 | NPM admin UI |
 | 443 | HTTPS (all proxied services) |
 
-Port `443/TCP` and `32400/TCP` ([Plex](https://www.plex.tv)) are forwarded on the AmpliFi Alien to `192.168.142.135`.
+Ports `80/TCP` and `443/TCP` are forwarded on the UDM-SE to `192.168.1.148`.
 
 **Access control:** NPM has an access list called "LAN & VPN only" that allows:
 
-- `192.168.142.0/24` (LAN)
+- `192.168.1.0/24` (LAN)
 - `10.253.0.0/24` (WireGuard tunnel)
 - Deny all others
 
@@ -127,17 +180,9 @@ This access list is applied to **all proxy hosts except `seerr` and `plex`**, wh
 | `plex.jsatk.us` | ✅ Yes | Port 32400 forwarded directly |
 | Everything else | ❌ No | LAN + WireGuard only via NPM access list |
 
-### Port Forwarding Summary
-
-| Port | Protocol | Forwarded To | Purpose |
-|---|---|---|---|
-| 443 | TCP | 192.168.142.135 | HTTPS (NPM → all services) |
-| 32400 | TCP | 192.168.142.135 | Plex direct |
-| 51820 | UDP | 192.168.142.135 | WireGuard VPN |
-
 ### Pi-hole (Network-Wide DNS)
 
-[Pi-hole](https://pi-hole.net) runs as a Docker container on the default `bridge` network (not `jsatk-net`) at `192.168.142.135`, with its web UI accessible at `pihole.jsatk.us` via NPM (LAN/VPN only).
+[Pi-hole](https://pi-hole.net) runs as a Docker container on the default `bridge` network (not `jsatk-net`) at `192.168.1.148`, with its web UI accessible at `pihole.jsatk.us` via NPM (LAN/VPN only).
 
 | Setting | Value |
 |---|---|
@@ -146,14 +191,17 @@ This access list is applied to **all proxy hosts except `seerr` and `plex`**, wh
 | Upstream DNS | `1.1.1.1` and `1.0.0.1` (Cloudflare) |
 | Listening mode | `ALL` interfaces |
 | Timezone | `America/Los_Angeles` |
-| Conditional forwarding | Enabled — `192.168.142.0/24` → `192.168.142.1` (router) for local hostname resolution |
+| Conditional forwarding | Enabled — `192.168.1.0/24` → `192.168.1.1` (router) for local hostname resolution |
+| Docker internal IP | `172.17.0.3` (bridge network) |
 
-**Router configuration (AmpliFi Alien):**
+Pi-hole must run on the `bridge` network (not `jsatk-net`) so it can bind to port 53 on the host and act as a network-wide DNS server.
 
-- Bypass DNS Cache: **ON**
-- Built-in Ad Blocker: **OFF** (Pi-hole handles this)
-- WAN DNS Primary: `192.168.142.135` (Pi-hole)
-- WAN DNS Secondary: `1.1.1.1` (fallback)
+**NPM proxy host note:** The Pi-hole proxy host in NPM forwards to `192.168.1.148:8155` (the host IP), not the Docker bridge IP (`172.17.0.3`). Although Pi-hole is on the bridge network, referencing the host IP is the reliable way to reach it from NPM. The Docker bridge IP (`172.17.0.3`) is noted for reference but should not be used as the NPM forward destination.
+
+**Router configuration (UDM-SE):**
+
+- Primary DNS: `192.168.1.148` (Pi-hole)
+- Secondary DNS: `1.1.1.1` (fallback)
 
 This means all DNS queries on the LAN flow through Pi-hole first. The conditional forwarding entry ensures that local hostnames (e.g. `jsatk-tower.local`) still resolve correctly via the router.
 
@@ -163,7 +211,7 @@ WireGuard peers use `1.1.1.1` as their DNS rather than Pi-hole, so ad blocking d
 
 1. iPhone connects to WireGuard → gets tunnel IP `10.253.0.2`
 2. Browser navigates to `sonarr.jsatk.us`
-3. DNS resolves `*.jsatk.us` → `192.168.142.135` (LAN IP)
+3. DNS resolves `*.jsatk.us` → `192.168.1.148` (LAN IP)
 4. Traffic goes through WireGuard tunnel to NAS port 443
 5. NPM receives request, checks access list: `10.253.0.2` matches WireGuard range ✅
 6. NPM terminates TLS (wildcard cert), forwards to `sonarr:8989` on `jsatk-net`
@@ -187,7 +235,7 @@ Two containers are exceptions to the `jsatk-net` rule:
 | `bazarr` | 6767 | 6767 | Subtitle management |
 | `beszel` | 8090 | 8090 | System monitoring dashboard |
 | `beszel-agent` | — | — | Metrics agent for beszel |
-| `cloudflareddns` | — | — | Dynamic DNS updater |
+| `cloudflareddns` | — | — | Dynamic DNS updater (tracks `vpn.jsatk.us` and `seerr.jsatk.us`) |
 | `flaresolverr` | 8191 | 8191 | Cloudflare bypass for Prowlarr |
 | `kometa` | — | — | Automated Plex collection management |
 | `kopia` | 51515 | 51515 | Backup (appdata + /boot → Mac Studio via SFTP) |
@@ -400,8 +448,19 @@ Key Docker config:
 | `/dev/dri` passthrough | ✅ | Intel QuickSync HW transcoding |
 | `/dev/shm/plex-transcode` → `/transcode` | tmpfs | RAM-based transcode temp files |
 | `/mnt/user/data/media/` → `/data/media` | Volume | Media library |
-| `PLEX_ADVERTISE_URL` | `http://jsatk-tower.local:32400,`<br>`http://192.168.142.135:32400,`<br>`https://plex.jsatk.us` | Multi-address advertising |
+| `PLEX_ADVERTISE_URL` | `http://jsatk-tower.local:32400,`<br>`http://192.168.1.148:32400,`<br>`https://plex.jsatk.us` | Multi-address advertising |
 | `PLEX_PURGE_CODECS=true` | ✅ | Forces fresh codec download on startup |
+
+### Plex Network Settings
+
+These are configured inside Plex at Settings → Network:
+
+| Setting | Value | Notes |
+|---|---|---|
+| Custom server access URLs | `http://jsatk-tower.local:32400,http://192.168.1.148:32400,https://plex.jsatk.us` | Used by Plex clients for local discovery |
+| LAN Networks | `192.168.1.0/24` | Tells Plex which subnet to treat as local |
+
+> **Migration note:** After a subnet change, Plex app clients may take several minutes to re-discover the server via plex.tv even after saving new settings. This is normal — just wait.
 
 ### Hardware Transcoding
 
@@ -466,13 +525,13 @@ Typical notifications sent to Discord:
 | Setting | Value |
 |---|---|
 | Transport | SFTP to Mac Studio |
-| SFTP target | `jsatk@192.168.142.152` |
+| SFTP target | `jsatk@192.168.1.210` |
 | Repo path | `/Users/jsatk/Documents/unraid-backups/kopia` |
 | SSH key (container) | `/root/.ssh/kopia_ed25519` |
 | SSH mode | External password-less SSH command with `-i /root/.ssh/kopia_ed25519 -o StrictHostKeyChecking=no` |
 | Encryption | `KOPIA_PASSWORD` env var (repo encryption password) |
 
-> `-o StrictHostKeyChecking=no` is a deliberate trade-off — the SFTP target is a static LAN IP, so MITM risk is negligible.
+> `-o StrictHostKeyChecking=no` is a deliberate trade-off — the SFTP target is a static LAN IP (DHCP reservation), so MITM risk is negligible.
 
 The SSH key pair lives at `/boot/config/ssh/kopia_ed25519` (persists across reboots via the flash drive).
 
@@ -599,11 +658,35 @@ cp ~/.vimrc /boot/config/home/.vimrc
 
 ### WireGuard
 
-Connect to `vpn.jsatk.us:51820` using your peer config. Once connected, all `*.jsatk.us` URLs above resolve to `192.168.142.135` and are accessible as if on LAN.
+Connect to `vpn.jsatk.us:51820` using your peer config. Once connected, all `*.jsatk.us` URLs above resolve to `192.168.1.148` and are accessible as if on LAN.
+
+### Static IP / DHCP Reservations
+
+| Device | IP | Notes |
+|---|---|---|
+| jsatk-tower | `192.168.1.148` | DHCP reservation in UDM-SE |
+| Mac Studio | `192.168.1.210` | DHCP reservation in UDM-SE |
 
 ---
 
 ## Decisions & Considerations
+
+### Network Overhaul (June 2026)
+
+The entire home network was replaced in June 2026. The AmpliFi Alien (subnet `192.168.142.0/24`) was retired and replaced with a full UniFi stack (subnet `192.168.1.0/24`). This required updating:
+
+- `wg0.conf` PostUp/PostDown routes from `192.168.142.0/24 via 192.168.142.1` to `192.168.1.0/24 via 192.168.1.1`
+- WireGuard client Allowed IPs from `192.168.142.0/24` to `192.168.1.0/24`
+- NPM "LAN & VPN only" access list from `192.168.142.0/24` to `192.168.1.0/24`
+- Cloudflare `*.jsatk.us` wildcard A record from `192.168.142.135` to `192.168.1.148`
+- Kopia SFTP target from `192.168.142.152` to `192.168.1.210`
+- Plex `PLEX_ADVERTISE_URL` from `192.168.142.135` to `192.168.1.148`
+- Plex Settings → Network → Custom server access URLs updated to new IP
+- Plex Settings → Network → LAN Networks updated from `192.168.142.0/24` to `192.168.1.0/24`
+- Pi-hole conditional forwarding from `192.168.142.0/24 → 192.168.142.1` to `192.168.1.0/24 → 192.168.1.1`
+- Pi-hole NPM proxy host updated from `192.168.142.135:8155` to `192.168.1.148:8155`
+- Port forwarding rules re-created on UDM-SE (HTTP, HTTPS, WireGuard, Plex)
+- `cloudflareddns` updated to track both `vpn.jsatk.us` and `seerr.jsatk.us`
 
 ### WireGuard vs Tailscale
 
@@ -616,8 +699,6 @@ Tailscale was the first remote access solution used on this setup and it worked 
 **Fewer moving parts.** WireGuard is built directly into Unraid — there is no extra container to maintain, no external authentication flow, and no separate app ecosystem to keep in sync. A WireGuard peer config is a small text file. The tunnel either works or it doesn't, and there is very little that can go wrong between those two states. Tailscale introduces an abstraction layer (MagicDNS, ACLs, the admin console) that, while user-friendly, is also additional surface area for things to break.
 
 The tradeoff is that WireGuard requires manual peer management — adding a new device means generating keys and distributing a config file yourself, whereas Tailscale handles this automatically. For a small number of personal devices, this is a negligible cost.
-
----
 
 ### Nginx Proxy Manager vs SWAG
 
@@ -652,3 +733,7 @@ Fail2ban is an intrusion prevention tool that monitors log files for repeated fa
 **Migrating to SWAG**
 
 If NPM's limitations become a pain point — particularly around advanced nginx config or native Fail2ban integration — SWAG is the natural migration path. The networking setup (Cloudflare DNS, wildcard cert via DNS-01 challenge, `jsatk-net` bridge) translates directly; it would primarily be a matter of recreating proxy host configs as nginx `.conf` files and enabling the relevant preset confs from SWAG's bundled library. The migration is non-trivial but well-documented, and the existing setup would not require significant rearchitecting.
+
+**UniFi Flex Mini (Living Room)**
+
+A USW-Flex-Mini is deployed in the living room, powered via PoE from the wall plate drop, providing 4 downstream ports for the Switch 2, Blu-ray player, LG OLED, and a spare. No configuration needed — it auto-adopted into the UniFi dashboard.
